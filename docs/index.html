@@ -79,6 +79,9 @@
     cursor: pointer;
     padding-top: 0.5rem;
   }
+  .col-picker { gap: 0.5rem 1.2rem; }
+  .col-picker input:disabled + span,
+  .col-picker input:disabled { opacity: 0.5; }
   .settings input[type="range"] { width: 180px; }
   .settings .slider-row {
     display: flex;
@@ -225,6 +228,19 @@
       <input type="checkbox" id="includeMissingAuthor">
       Include books without author
     </label>
+  </div>
+</details>
+
+<details class="settings">
+  <summary>CSV Download Columns</summary>
+  <div class="inner col-picker" id="colPicker">
+    <label class="check-label"><input type="checkbox" value="Title" checked disabled> Title</label>
+    <label class="check-label"><input type="checkbox" value="Author" checked disabled> Author</label>
+    <label class="check-label"><input type="checkbox" value="uuid" checked data-conditional="uuid"> uuid</label>
+    <label class="check-label"><input type="checkbox" value="display_name" checked> display_name</label>
+    <label class="check-label"><input type="checkbox" value="message" checked> message</label>
+    <label class="check-label"><input type="checkbox" value="pattern" checked> pattern</label>
+    <label class="check-label"><input type="checkbox" value="confidence" checked> confidence</label>
   </div>
 </details>
 
@@ -835,6 +851,7 @@ async function processFile(file) {
   statusEl.textContent = `Extracted ${allResults.length} candidates in ${elapsed}ms. Adjust settings to filter.`;
 
   applyFilters();
+  updateColumnPickerVisibility();
   statsBar.classList.add('visible');
   tableWrap.style.display = '';
   downloadBtn.disabled = false;
@@ -915,12 +932,12 @@ function renderTable() {
   });
 }
 
-// Download
+// Download — uses column picker checkboxes
 downloadBtn.addEventListener('click', () => {
   if (filteredResults.length === 0) return;
 
-  const hasUuid = filteredResults.some(r => r.hasOwnProperty('uuid'));
-  const header = ['Title', 'Author', ...(hasUuid ? ['uuid'] : []), 'display_name', 'message', 'pattern', 'confidence'];
+  const header = getSelectedColumns();
+  if (header.length === 0) return;
 
   const csvRows = filteredResults.map(r =>
     header.map(col => '"' + String(r[col] || '').replace(/"/g, '""') + '"').join(',')
@@ -935,6 +952,20 @@ downloadBtn.addEventListener('click', () => {
   a.click();
   URL.revokeObjectURL(url);
 });
+
+function getSelectedColumns() {
+  return [...document.querySelectorAll('#colPicker input[type="checkbox"]:checked')]
+    .map(cb => cb.value);
+}
+
+function updateColumnPickerVisibility() {
+  const hasUuid = allResults.some(r => r.hasOwnProperty('uuid'));
+  const uuidCheckbox = document.querySelector('#colPicker input[data-conditional="uuid"]');
+  if (uuidCheckbox) {
+    uuidCheckbox.closest('label').style.display = hasUuid ? '' : 'none';
+    if (!hasUuid) uuidCheckbox.checked = false;
+  }
+}
 
 function esc(str) {
   const d = document.createElement('div');
