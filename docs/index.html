@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comment Book Extractor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f5;
+    color: #333;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { margin-bottom: 0.25rem; font-size: 1.6rem; }
+  .subtitle { color: #666; margin-bottom: 1.5rem; font-size: 0.95rem; }
+
+  /* Upload area */
+  .upload-area {
+    background: #fff;
+    border: 2px dashed #ccc;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    margin-bottom: 1.5rem;
+    transition: border-color 0.2s;
+  }
+  .upload-area.dragover { border-color: #4a90d9; background: #f0f6ff; }
+  .upload-area input[type="file"] { display: none; }
+  .upload-area label {
+    display: inline-block;
+    background: #4a90d9;
+    color: #fff;
+    padding: 0.6rem 1.5rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .upload-area label:hover { background: #3a7bc8; }
+  .upload-area p { margin-top: 0.5rem; font-size: 0.85rem; color: #888; }
+
+  /* Settings panel */
+  .settings {
+    margin-bottom: 1.5rem;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .settings summary {
+    padding: 0.7rem 1rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #666;
+    user-select: none;
+  }
+  .settings summary:hover { background: #fafafa; }
+  .settings .inner {
+    padding: 0 1rem 1rem;
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .settings label {
+    font-size: 0.85rem;
+    color: #555;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .settings .check-label {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    padding-top: 0.5rem;
+  }
+  .settings input[type="range"] { width: 180px; }
+  .settings .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .settings .slider-val {
+    font-weight: 600;
+    font-size: 0.95rem;
+    min-width: 1.5em;
+    text-align: center;
+  }
+
+  /* Stats bar */
+  .stats {
+    display: none;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .stats.visible { display: flex; }
+  .stat-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .stat-card strong {
+    display: block;
+    font-size: 1.3rem;
+    color: #333;
+  }
+
+  /* Status & actions */
+  .status { margin-bottom: 1rem; font-size: 0.95rem; min-height: 1.5em; }
+  .actions { margin-bottom: 1rem; display: flex; gap: 0.5rem; }
+  .actions button {
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1.2rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  #downloadBtn { background: #2d8a4e; }
+  #downloadBtn:hover { background: #247a42; }
+  .actions button:disabled { background: #aaa; cursor: default; }
+
+  /* Table */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    font-size: 0.85rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid #eee;
+  }
+  th {
+    background: #fafafa;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  th:hover { background: #f0f0f0; }
+  th .sort-arrow { font-size: 0.7rem; margin-left: 0.3rem; opacity: 0.4; }
+  th.sorted .sort-arrow { opacity: 1; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: #f9f9f9; }
+
+  /* Pattern & confidence tags */
+  .tag {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .tag.by { background: #e8f5e9; color: #2e7d32; }
+  .tag.dash { background: #e3f2fd; color: #1565c0; }
+  .tag.quoted { background: #fff3e0; color: #e65100; }
+  .tag.emphasized { background: #fce4ec; color: #c62828; }
+  .tag.fable { background: #ede7f6; color: #4527a0; }
+  .tag.segment { background: #fafafa; color: #999; }
+  .conf-high { color: #2e7d32; font-weight: 600; }
+  .conf-med { color: #f57f17; font-weight: 600; }
+  .conf-low { color: #c62828; font-weight: 600; }
+
+  /* Message cell */
+  .msg-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    color: #666;
+    font-size: 0.8rem;
+  }
+  .msg-cell.expanded {
+    white-space: normal;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+
+<h1>Comment Book Extractor</h1>
+<p class="subtitle">Upload a CSV with <code>display_name</code> and <code>message</code> columns to extract book recommendations.</p>
+
+<div class="upload-area" id="dropZone">
+  <label for="csvInput">Choose CSV File</label>
+  <input type="file" id="csvInput" accept=".csv">
+  <p>or drag &amp; drop a .csv file here</p>
+</div>
+
+<details class="settings" open>
+  <summary>Extraction Settings</summary>
+  <div class="inner">
+    <label>
+      Min confidence
+      <div class="slider-row">
+        <input type="range" id="confidenceSlider" min="-5" max="8" value="2" step="1">
+        <span class="slider-val" id="confidenceVal">2</span>
+      </div>
+    </label>
+    <label class="check-label">
+      <input type="checkbox" id="aggressiveMode">
+      Aggressive mode
+    </label>
+    <label class="check-label">
+      <input type="checkbox" id="includeMissingAuthor">
+      Include books without author
+    </label>
+  </div>
+</details>
+
+<div class="stats" id="statsBar">
+  <div class="stat-card"><strong id="statComments">0</strong>Comments parsed</div>
+  <div class="stat-card"><strong id="statBooks">0</strong>Books found</div>
+  <div class="stat-card"><strong id="statAudiobook">0</strong>by pattern</div>
+  <div class="stat-card"><strong id="statDash">0</strong>dash pattern</div>
+  <div class="stat-card"><strong id="statOther">0</strong>other patterns</div>
+</div>
+
+<div class="status" id="status"></div>
+
+<div class="actions">
+  <button id="downloadBtn" disabled>Download CSV</button>
+</div>
+
+<div class="table-wrap" id="tableWrap" style="display:none">
+  <table>
+    <thead id="tableHead">
+      <tr>
+        <th data-col="index"># <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="Title">Title <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="Author">Author <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="display_name">Commenter <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="pattern">Pattern <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="confidence">Conf <span class="sort-arrow">&#9650;</span></th>
+        <th data-col="message">Comment <span class="sort-arrow">&#9650;</span></th>
+      </tr>
+    </thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<script>
+// ==========================================
+//  CONSTANTS
+// ==========================================
+
+const QUOTE_CHARS = '"\'\u201c\u201d\u2018\u2019';
+
+const PRONOUN_LEADS = new Set([
+  'i', "i'm", 'im', 'we', 'my', 'currently', 'right now', 'next up', 'listening', 'reading'
+]);
+
+const NON_TITLE_PHRASES = new Set([
+  'slow burn', 'beach read', 'currently reading', 'next up',
+  'highly recommend', 'dnf', 'audiobook', 'audio books', 'audio book'
+]);
+
+const TITLE_META_KEYWORDS = [
+  'audiobook', 'kindle', 'paperback', 'hardcover', 'ebook',
+  'edition', 'unabridged', 'book', 'volume', 'vol.', 'series'
+];
+
+const AUTHOR_PARTICLES = new Set([
+  'de', 'del', 'della', 'di', 'du', 'la', 'le',
+  'van', 'von', 'da', 'dos', 'das', 'bin', 'ibn',
+  'and', '&'
+]);
+
+const AUTHOR_BLOCKLIST = new Set([
+  'reading', 'listening', 'recommend', 'recommended',
+  'currently', 'next', 'up', 'book', 'series', 'chapter', 'audiobook',
+  'narration', 'narrator', 'audio', 'fantastic', 'excellent', 'amazing',
+  'written', 'performed', 'read'
+]);
+
+// Build meta-keyword regex fragment once
+const META_RE_FRAGMENT = TITLE_META_KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+// ==========================================
+//  REGEX PATTERNS
+// ==========================================
+
+const BY_PATTERN = () => new RegExp(
+  '(?<title>[^.\\n]{2,80}?)\\s+by\\s+' +
+  '(?<author>[A-Za-z][A-Za-z.\'\\-\\s()\\[\\]{}]{1,100}?)(?=$|[,;]|\\s*-\\s*)',
+  'gi'
+);
+
+const DASH_PATTERN = () => new RegExp(
+  '(?<title>[^.\\n]{2,80}?)\\s*[-\u2014\u2013]\\s*' +
+  '(?<author>[A-Za-z][A-Za-z.\'\\-\\s()\\[\\]{}]{1,100}?)(?=$|[,;])',
+  'g'
+);
+
+const QUOTED_PATTERN = () => new RegExp(
+  '(?<!\\w)"([^"\\n]{2,80})"(?!\\w)|(?<!\\w)\'([^\'\\n]{2,80})\'(?!\\w)',
+  'g'
+);
+
+const EMPHASIZED_PATTERN = () => new RegExp(
+  '(?<!\\w)\\*\\*([^*\\n]{2,80})\\*\\*(?!\\w)|(?<!\\w)\\*([^*\\n]{2,80})\\*(?!\\w)|(?<!\\w)_([^_\\n]{2,80})_(?!\\w)',
+  'g'
+);
+
+const FABLE_URL_PATTERN = /https?:\/\/fable\.co\/book\/(.+?)-by-(.+?)(?:-(\d{10,13}))?(?:\s|$|[,;)}\]])/gi;
+
+// ==========================================
+//  TEXT PROCESSING
+// ==========================================
+
+function normalizeUnicode(value) {
+  value = value.normalize('NFKC');
+  value = value.replace(/\u2014/g, '-').replace(/\u2013/g, '-');
+  value = value.replace(/\u2018/g, "'").replace(/\u2019/g, "'");
+  value = value.replace(/\u201c/g, '"').replace(/\u201d/g, '"');
+  return value;
+}
+
+function normalizeText(value) {
+  value = normalizeUnicode(value);
+  value = value.replace(/\s+/g, ' ');
+  return value.trim();
+}
+
+function stripWrappers(value) {
+  value = normalizeText(value);
+  value = value.replace(/^[\s\-:;,.!?]+|[\s\-:;,.!?]+$/g, '');
+
+  const emphasisPatterns = [/^\*\*(.+)\*\*$/, /^\*(.+)\*$/, /^__(.+)__$/, /^_(.+)_$/];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pat of emphasisPatterns) {
+      const m = value.match(pat);
+      if (m) { value = m[1].trim(); changed = true; }
+    }
+  }
+
+  if (value.length >= 2 && QUOTE_CHARS.includes(value[0]) && QUOTE_CHARS.includes(value[value.length - 1])) {
+    value = value.slice(1, -1).trim();
+  }
+
+  value = value.replace(/^[\s\-:;,.!?]+|[\s\-:;,.!?]+$/g, '');
+  value = value.replace(/\s+/g, ' ');
+  return value;
+}
+
+function cleanTitle(title) {
+  title = stripWrappers(title);
+  title = title.replace(/^[^A-Za-z0-9]+/, '');
+  // Strip leading conjunctions (from multi-book comments like "...and Title by Author")
+  title = title.replace(/^(?:and|but|or|also|then|plus)\s+/i, '');
+  // Strip "I/I'm/I've" + optional adverb + activity prefix in one combined pass
+  title = title.replace(
+    /^(?:(?:i['']?m|im|i['']?ve|i)\s+)?(?:(?:currently|just|almost|finally|gonna|really|also)\s+)*(?:currently\s+reading|reading\s+now|reading|currently\s+listening\s+to|listening\s+to|just\s+finished|finished|starting|started|enjoying|been\s+(?:reading|listening\s+to)|i\s+recommend|recommend|recommended|read|try)\s+/i,
+    ''
+  );
+  // Strip residual activity prefixes that survive the first pass
+  // (handles "This week I'm listening to X", "as well as X", "Physically reading: X", etc.)
+  title = title.replace(
+    /^(?:this\s+(?:week|month|year)\s+)?(?:(?:i['']?m|im|i['']?ve|i)\s+)?(?:listening\s+to|reading|on)\s+/i,
+    ''
+  );
+  title = title.replace(/^(?:as\s+well\s+as|physically\s+reading:?|Almost\s+done\s+with)\s+/i, '');
+  // Reject titles that are just narrator/activity words (e.g. "Read by Theo Solomon")
+  if (/^(?:read|narrated|performed|written|voiced)$/i.test(title)) title = '';
+
+  if (title.length >= 2 && QUOTE_CHARS.includes(title[0]) && QUOTE_CHARS.includes(title[title.length - 1])) {
+    title = title.slice(1, -1);
+  }
+  // Strip any remaining quote chars from edges
+  while (title.length && (QUOTE_CHARS.includes(title[0]) || title[0] === ' ')) title = title.slice(1);
+  while (title.length && (QUOTE_CHARS.includes(title[title.length - 1]) || title[title.length - 1] === ' ')) title = title.slice(0, -1);
+
+  title = title.replace(/^(The)([A-Z])/, '$1 $2');
+
+  // Strip metadata in parens/brackets (audiobook, kindle, etc.)
+  const metaRe = new RegExp('\\s*[([{]\\s*[^)\\]{}]*(?:' + META_RE_FRAGMENT + ')[^)\\]{}]*[)\\]}]\\s*$', 'i');
+  title = title.replace(metaRe, '');
+  title = title.replace(/\s{2,}/g, ' ');
+  title = title.replace(/[,.;:!?\-]+$/, '');
+  return stripWrappers(title);
+}
+
+function cleanAuthor(author) {
+  author = stripWrappers(author);
+  author = author.replace(/^(?:(?:written\s+by|author|by)\s+)+/i, '');
+  author = author.replace(/\s*[([{][^)\]{}]*[)\]}]\s*$/, '');
+  author = author.replace(/\s{2,}/g, ' ');
+  author = author.replace(/[,.;:!?\-]+$/, '');
+  return author.trim();
+}
+
+function splitSegments(message) {
+  let normalized = normalizeUnicode(message);
+  normalized = normalized.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Split on newlines and semicolons first
+  const rawParts = normalized.split(/\n+|;+/);
+  const segments = [];
+
+  for (const part of rawParts) {
+    // Split on sentence boundaries (.!? followed by space) but NOT after
+    // initials like "J." "R.F." — the lookbehinds apply to the whitespace:
+    //   (?<=[.!?])  = whitespace must follow sentence-ending punctuation
+    //   (?<![A-Z]\.) = but NOT if that punctuation is part of an initial
+    let subParts;
+    try {
+      subParts = part.replace(/(?<![A-Z]\.)(?<=[.!?])\s+/g, '\x00').split('\x00');
+    } catch (e) {
+      // Fallback for browsers without lookbehind
+      subParts = [part];
+    }
+    for (let seg of subParts) {
+      seg = seg.replace(/^\s*[-\u2022]\s*/, '').trim();
+      if (seg) segments.push(seg);
+    }
+  }
+
+  // Merge segments where the next one starts with "by Author" (handles line breaks
+  // between title and author, e.g. "Go Tell the Bees\nby Diana Gabaldon")
+  const merged = [];
+  for (let i = 0; i < segments.length; i++) {
+    if (i > 0 && /^by\s+[A-Z]/i.test(segments[i]) && merged.length > 0) {
+      merged[merged.length - 1] += ' ' + segments[i];
+    } else {
+      merged.push(segments[i]);
+    }
+  }
+
+  return merged;
+}
+
+function countWords(value) {
+  const m = value.match(/\b\w+\b/g);
+  return m ? m.length : 0;
+}
+
+function isCapitalizedNameToken(token) {
+  const raw = token.trim();
+  if (!raw) return false;
+  if (/^(?:[A-Z]\.){1,4}$/.test(raw)) return true;
+  const t = raw.replace(/\.$/, '');
+  if (!t) return false;
+  if (/^[A-Z]$/.test(t)) return true;
+  if (/^[A-Z][a-z]+(?:[-'][A-Z][a-z]+)*$/.test(t)) return true;
+  return false;
+}
+
+function validateAuthor(author) {
+  const cleaned = cleanAuthor(author);
+  if (!cleaned) return 'invalid';
+
+  const words = cleaned.split(/\s+/);
+  if (words.length < 1 || words.length > 5) return 'invalid';
+
+  let nonParticle = 0;
+  let validTokens = 0;
+
+  for (const word of words) {
+    const lowered = word.toLowerCase().replace(/\.$/, '');
+    if (AUTHOR_BLOCKLIST.has(lowered)) return 'invalid';
+    if (AUTHOR_PARTICLES.has(lowered)) continue;
+
+    nonParticle++;
+    if (isCapitalizedNameToken(word)) validTokens++;
+  }
+
+  if (nonParticle === 0) return 'invalid';
+  if (validTokens === nonParticle) return 'valid';
+  if (validTokens >= Math.max(1, nonParticle - 1)) return 'borderline';
+  return 'invalid';
+}
+
+function titlePenalty(title, quotedOrEmphasized) {
+  let penalty = 0;
+  let reject = false;
+
+  const norm = cleanTitle(title);
+  const lowered = norm.toLowerCase();
+
+  for (const lead of PRONOUN_LEADS) {
+    if (lowered.startsWith(lead + ' ') || lowered === lead) {
+      penalty -= 3;
+      break;
+    }
+  }
+
+  for (const phrase of NON_TITLE_PHRASES) {
+    if (lowered.includes(phrase)) { penalty -= 3; break; }
+  }
+
+  const wc = countWords(norm);
+  if (norm.length > 80 || wc > 12) {
+    penalty -= 2;
+    if (norm.length > 140 || wc > 18) reject = true;
+  }
+
+  if (norm === norm.toLowerCase() && !quotedOrEmphasized) {
+    penalty -= 2;
+  }
+
+  return { penalty, reject };
+}
+
+function normalizeDedupeValue(value) {
+  value = cleanTitle(value).toLowerCase();
+  value = value.replace(/^(?:the|a|an)\s+/, '');
+  value = value.replace(/[^a-z0-9\s]/g, '');
+  value = value.replace(/\s+/g, ' ').trim();
+  return value;
+}
+
+// ==========================================
+//  PREPROCESSING
+// ==========================================
+
+function stripMentions(text) {
+  return text.replace(/<@[a-f0-9\-]{8,60}>/gi, '').trim();
+}
+
+function stripUrls(text) {
+  return text.replace(/https?:\/\/[^\s,)}\]]+/gi, '').trim();
+}
+
+function extractFromFableUrls(message) {
+  const results = [];
+  const re = /https?:\/\/fable\.co\/book\/(.+?)-by-(.+?)(?:-(\d{10,13}))?(?=\s|$|[,;)}\]])/gi;
+  let m;
+  while ((m = re.exec(message)) !== null) {
+    const titleSlug = m[1];
+    let authorSlug = m[2];
+    // Strip trailing ISBN if it wasn't captured separately
+    authorSlug = authorSlug.replace(/-?\d{10,13}$/, '');
+    const title = titleSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const author = authorSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    if (title && author) results.push({ title, author });
+  }
+  return results;
+}
+
+// ==========================================
+//  EXTRACTION ENGINE
+// ==========================================
+
+function extractAll(records) {
+  // Extract with maximum permissiveness; filtering happens at display time
+  const allResults = [];
+  const hasUuid = records.length > 0 && records[0].hasOwnProperty('uuid');
+
+  for (const record of records) {
+    const displayName = normalizeText(record.display_name || '');
+    const rawMessage = record.message || '';
+    const message = normalizeText(rawMessage);
+    const uuid = hasUuid ? normalizeText(record.uuid || '') : '';
+
+    if (!message) continue;
+
+    const seen = new Set();
+
+    // Phase 1: Extract from fable.co URLs (high confidence)
+    const fableBooks = extractFromFableUrls(rawMessage);
+    for (const fb of fableBooks) {
+      const dedupeKey = normalizeDedupeValue(fb.title) + '||' + normalizeDedupeValue(fb.author);
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      const row = {
+        Title: fb.title, Author: fb.author,
+        display_name: displayName, message,
+        pattern: 'fable_url', confidence: 4,
+        quotedOrEmphasized: false,
+      };
+      if (hasUuid) row.uuid = uuid;
+      allResults.push(row);
+    }
+
+    // Phase 2: Regex patterns on cleaned segments
+    const cleanedMessage = stripUrls(stripMentions(rawMessage));
+    const segments = splitSegments(cleanedMessage);
+
+    for (const segment of segments) {
+      const normalized = normalizeText(segment);
+      const candidates = [];
+
+      // BY pattern (confidence 3)
+      for (const match of normalized.matchAll(BY_PATTERN())) {
+        candidates.push({
+          title: match.groups.title,
+          author: match.groups.author,
+          pattern: 'title_by_author',
+          rawMatch: match[0],
+          confidence: 3,
+          quotedOrEmphasized: false,
+        });
+      }
+
+      // DASH pattern (confidence 2)
+      for (const match of normalized.matchAll(DASH_PATTERN())) {
+        candidates.push({
+          title: match.groups.title,
+          author: match.groups.author,
+          pattern: 'title_dash_author',
+          rawMatch: match[0],
+          confidence: 2,
+          quotedOrEmphasized: false,
+        });
+      }
+
+      // QUOTED pattern (confidence 2, aggressive only)
+      for (const match of normalized.matchAll(QUOTED_PATTERN())) {
+        const title = match[1] || match[2] || '';
+        candidates.push({
+          title, author: '',
+          pattern: 'quoted_title',
+          rawMatch: match[0],
+          confidence: 2,
+          quotedOrEmphasized: true,
+          aggressiveOnly: true,
+        });
+      }
+
+      // EMPHASIZED pattern (confidence 2, aggressive only)
+      for (const match of normalized.matchAll(EMPHASIZED_PATTERN())) {
+        const title = [match[1], match[2], match[3]].find(g => g) || '';
+        candidates.push({
+          title, author: '',
+          pattern: 'emphasized_title',
+          rawMatch: match[0],
+          confidence: 2,
+          quotedOrEmphasized: true,
+          aggressiveOnly: true,
+        });
+      }
+
+      // Segment fallback (confidence 1, aggressive only)
+      const segTitle = cleanTitle(normalized);
+      if (
+        segTitle.length >= 2 && segTitle.length <= 80 &&
+        countWords(segTitle) <= 8 &&
+        !segTitle.toLowerCase().includes(' by ') &&
+        !/\s[-\u2014\u2013]\s/.test(segTitle)
+      ) {
+        candidates.push({
+          title: segTitle, author: '',
+          pattern: 'segment_fallback',
+          rawMatch: normalized,
+          confidence: 1,
+          quotedOrEmphasized: false,
+          aggressiveOnly: true,
+        });
+      }
+
+      // Score and filter candidates
+      for (const c of candidates) {
+        const titleOrig = normalizeText(c.title);
+        const authorOrig = normalizeText(c.author);
+        let title = cleanTitle(titleOrig);
+        let author = cleanAuthor(authorOrig);
+        let confidence = c.confidence;
+
+        if (!title) continue;
+        if (countWords(title) > 12 || title.length > 80) confidence -= 2;
+
+        let authorInvalid = false;
+        if (c.pattern === 'title_by_author' || c.pattern === 'title_dash_author') {
+          const authorStatus = validateAuthor(author);
+          if (authorStatus !== 'valid') {
+            authorInvalid = true;
+            author = '';
+            confidence -= 2;
+          }
+        }
+
+        const tp = titlePenalty(title, c.quotedOrEmphasized);
+        confidence += tp.penalty;
+        if (tp.reject) continue;
+
+        const dedupeKey = normalizeDedupeValue(title) + '||' + normalizeDedupeValue(author);
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const row = {
+          Title: title, Author: author,
+          display_name: displayName, message,
+          pattern: c.pattern, confidence,
+          quotedOrEmphasized: c.quotedOrEmphasized,
+          aggressiveOnly: !!c.aggressiveOnly,
+          authorInvalid,
+        };
+        if (hasUuid) row.uuid = uuid;
+        allResults.push(row);
+      }
+    }
+  }
+
+  return allResults;
+}
+
+// ==========================================
+//  UI LOGIC
+// ==========================================
+
+const csvInput = document.getElementById('csvInput');
+const dropZone = document.getElementById('dropZone');
+const statusEl = document.getElementById('status');
+const downloadBtn = document.getElementById('downloadBtn');
+const tableWrap = document.getElementById('tableWrap');
+const resultsBody = document.getElementById('resultsBody');
+const statsBar = document.getElementById('statsBar');
+const confidenceSlider = document.getElementById('confidenceSlider');
+const confidenceVal = document.getElementById('confidenceVal');
+const aggressiveMode = document.getElementById('aggressiveMode');
+const includeMissingAuthor = document.getElementById('includeMissingAuthor');
+
+let allResults = [];
+let filteredResults = [];
+let sortCol = 'index';
+let sortAsc = true;
+
+// Drag & drop
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.csv')) processFile(file);
+});
+csvInput.addEventListener('change', () => { if (csvInput.files[0]) processFile(csvInput.files[0]); });
+
+// Settings change → re-filter
+confidenceSlider.addEventListener('input', () => {
+  confidenceVal.textContent = confidenceSlider.value;
+  applyFilters();
+});
+aggressiveMode.addEventListener('change', applyFilters);
+includeMissingAuthor.addEventListener('change', applyFilters);
+
+// Sortable headers
+document.getElementById('tableHead').addEventListener('click', (e) => {
+  const th = e.target.closest('th');
+  if (!th || !th.dataset.col) return;
+  const col = th.dataset.col;
+  if (sortCol === col) { sortAsc = !sortAsc; }
+  else { sortCol = col; sortAsc = true; }
+  // Update header visuals
+  document.querySelectorAll('#tableHead th').forEach(h => h.classList.remove('sorted'));
+  th.classList.add('sorted');
+  th.querySelector('.sort-arrow').innerHTML = sortAsc ? '&#9650;' : '&#9660;';
+  renderTable();
+});
+
+function parseCSV(file) {
+  return new Promise((resolve, reject) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => {
+        const rows = res.data.map(row => {
+          const norm = {};
+          for (const key of Object.keys(row)) {
+            norm[key.trim().toLowerCase()] = (row[key] || '').trim();
+          }
+          const out = {
+            display_name: norm['display_name'] || '',
+            message: norm['message'] || '',
+          };
+          if ('uuid' in norm) out.uuid = norm['uuid'];
+          return out;
+        }).filter(r => r.display_name || r.message);
+        resolve(rows);
+      },
+      error: reject,
+    });
+  });
+}
+
+async function processFile(file) {
+  allResults = [];
+  filteredResults = [];
+  resultsBody.innerHTML = '';
+  tableWrap.style.display = 'none';
+  statsBar.classList.remove('visible');
+  downloadBtn.disabled = true;
+  statusEl.textContent = 'Parsing CSV...';
+
+  let records;
+  try {
+    records = await parseCSV(file);
+  } catch (err) {
+    statusEl.textContent = 'Failed to parse CSV: ' + err.message;
+    return;
+  }
+
+  const headers = records.length > 0 ? Object.keys(records[0]) : [];
+  const hasDisplay = headers.includes('display_name');
+  const hasMessage = headers.includes('message');
+  if (!hasDisplay || !hasMessage) {
+    statusEl.textContent = 'CSV is missing required columns: ' +
+      [!hasDisplay && 'display_name', !hasMessage && 'message'].filter(Boolean).join(', ');
+    return;
+  }
+
+  statusEl.textContent = `Extracting from ${records.length} comments...`;
+
+  // Use setTimeout to let the DOM update before blocking with extraction
+  await new Promise(r => setTimeout(r, 10));
+
+  const t0 = performance.now();
+  allResults = extractAll(records);
+  const elapsed = Math.round(performance.now() - t0);
+
+  document.getElementById('statComments').textContent = records.length;
+  statusEl.textContent = `Extracted ${allResults.length} candidates in ${elapsed}ms. Adjust settings to filter.`;
+
+  applyFilters();
+  statsBar.classList.add('visible');
+  tableWrap.style.display = '';
+  downloadBtn.disabled = false;
+  csvInput.value = '';
+}
+
+function applyFilters() {
+  const minConf = parseInt(confidenceSlider.value);
+  const aggressive = aggressiveMode.checked;
+  const showMissingAuthor = includeMissingAuthor.checked;
+
+  filteredResults = allResults.filter(r => {
+    if (r.confidence < minConf) return false;
+    if (!aggressive && r.aggressiveOnly) return false;
+    if (!showMissingAuthor && !r.Author) return false;
+    // In strict mode with drop_invalid_author, skip rows with invalidated authors
+    if (!aggressive && r.authorInvalid) return false;
+    return true;
+  });
+
+  // Update stats
+  document.getElementById('statBooks').textContent = filteredResults.length;
+  const byCount = filteredResults.filter(r => r.pattern === 'title_by_author').length;
+  const dashCount = filteredResults.filter(r => r.pattern === 'title_dash_author').length;
+  const otherCount = filteredResults.length - byCount - dashCount;
+  document.getElementById('statAudiobook').textContent = byCount;
+  document.getElementById('statDash').textContent = dashCount;
+  document.getElementById('statOther').textContent = otherCount;
+
+  renderTable();
+}
+
+function renderTable() {
+  // Sort
+  const sorted = [...filteredResults];
+  sorted.forEach((r, i) => r._index = i + 1);
+
+  sorted.sort((a, b) => {
+    let va, vb;
+    if (sortCol === 'index') { va = a._index; vb = b._index; }
+    else if (sortCol === 'confidence') { va = a.confidence; vb = b.confidence; }
+    else { va = (a[sortCol] || '').toLowerCase(); vb = (b[sortCol] || '').toLowerCase(); }
+
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  resultsBody.innerHTML = '';
+  for (let i = 0; i < sorted.length; i++) {
+    const r = sorted[i];
+    const tr = document.createElement('tr');
+
+    const patternClass = r.pattern.includes('by') ? 'by' :
+      r.pattern.includes('dash') ? 'dash' :
+      r.pattern.includes('quoted') ? 'quoted' :
+      r.pattern.includes('emphasized') ? 'emphasized' :
+      r.pattern.includes('fable') ? 'fable' : 'segment';
+    const patternLabel = r.pattern.replace(/_/g, ' ').replace('title ', '');
+
+    const confClass = r.confidence >= 3 ? 'conf-high' : r.confidence >= 2 ? 'conf-med' : 'conf-low';
+
+    tr.innerHTML =
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(r.Title) + '</td>' +
+      '<td>' + (r.Author ? esc(r.Author) : '<span style="color:#bbb">—</span>') + '</td>' +
+      '<td>' + esc(r.display_name) + '</td>' +
+      '<td><span class="tag ' + patternClass + '">' + esc(patternLabel) + '</span></td>' +
+      '<td class="' + confClass + '">' + r.confidence + '</td>' +
+      '<td class="msg-cell" title="Click to expand">' + esc(r.message) + '</td>';
+
+    resultsBody.appendChild(tr);
+  }
+
+  // Click to expand message cells
+  resultsBody.querySelectorAll('.msg-cell').forEach(cell => {
+    cell.addEventListener('click', () => cell.classList.toggle('expanded'));
+  });
+}
+
+// Download
+downloadBtn.addEventListener('click', () => {
+  if (filteredResults.length === 0) return;
+
+  const hasUuid = filteredResults.some(r => r.hasOwnProperty('uuid'));
+  const header = ['Title', 'Author', ...(hasUuid ? ['uuid'] : []), 'display_name', 'message', 'pattern', 'confidence'];
+
+  const csvRows = filteredResults.map(r =>
+    header.map(col => '"' + String(r[col] || '').replace(/"/g, '""') + '"').join(',')
+  );
+
+  const csvContent = header.join(',') + '\n' + csvRows.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'extracted_recommendations.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
