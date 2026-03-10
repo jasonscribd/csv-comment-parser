@@ -117,15 +117,10 @@ def parse_comments_csv(file_obj: BinaryIO) -> list[dict[str, str]]:
 
     records: list[dict[str, str]] = []
     for row in reader:
-        record = {
-            "display_name": (row.get("display_name") or "").strip(),
-            "message": (row.get("message") or "").strip(),
-        }
-
-        uuid_value = (row.get("uuid") or row.get("UUID") or "").strip()
-        if "uuid" in headers or "UUID" in headers:
-            record["uuid"] = uuid_value
-
+        record: dict[str, str] = {}
+        for key in reader.fieldnames or []:
+            stripped_key = key.strip()
+            record[stripped_key] = (row.get(key) or "").strip()
         records.append(record)
 
     return records
@@ -332,14 +327,14 @@ def extract_recommendations(
 
     rows: list[dict[str, str | int]] = []
 
-    has_uuid = "uuid" in df.columns
-    input_cols = ["display_name", "message"] + (["uuid"] if has_uuid else [])
+    extra_cols = [c for c in df.columns if c not in {"display_name", "message"}]
+    input_cols = ["display_name", "message"] + extra_cols
 
     for row_index, row in df[input_cols].fillna("").iterrows():
         display_name = _normalize_text(str(row["display_name"]))
         raw_message = str(row["message"])
         message = _normalize_text(raw_message)
-        uuid = _normalize_text(str(row["uuid"])) if has_uuid else ""
+        extra_values = {c: _normalize_text(str(row[c])) for c in extra_cols}
 
         seen: set[tuple[str, str]] = set()
         segments = _split_segments(raw_message)
@@ -463,11 +458,10 @@ def extract_recommendations(
                 out_row: dict[str, str | int] = {
                     "Title": title,
                     "Author": author,
+                    **extra_values,
                     "display_name": display_name,
                     "message": message,
                 }
-                if has_uuid:
-                    out_row["uuid"] = uuid
                 if include_metadata:
                     out_row["Title_original"] = title_original
                     out_row["Author_original"] = author_original
@@ -476,7 +470,7 @@ def extract_recommendations(
                     out_row["confidence"] = confidence
                 rows.append(out_row)
 
-    base_cols = ["Title", "Author"] + (["uuid"] if has_uuid else []) + ["display_name", "message"]
+    base_cols = ["Title", "Author"] + extra_cols + ["display_name", "message"]
     if include_metadata:
         cols = base_cols + ["Title_original", "Author_original", "raw_match", "pattern", "confidence"]
     else:
