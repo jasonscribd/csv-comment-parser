@@ -18,6 +18,28 @@
   h1 { margin-bottom: 0.25rem; font-size: 1.6rem; }
   .subtitle { color: #666; margin-bottom: 1.5rem; font-size: 0.95rem; }
 
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1.5rem;
+    border-bottom: 2px solid #ddd;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 0.6rem 1.4rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+    color: #666;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+  }
+  .tab-btn:hover { color: #333; }
+  .tab-btn.active { color: #4a90d9; border-bottom-color: #4a90d9; font-weight: 600; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
   /* Upload area */
   .upload-area {
     background: #fff;
@@ -41,6 +63,35 @@
   }
   .upload-area label:hover { background: #3a7bc8; }
   .upload-area p { margin-top: 0.5rem; font-size: 0.85rem; color: #888; }
+
+  /* Paste area */
+  .paste-area {
+    margin-bottom: 1.5rem;
+  }
+  .paste-area p { font-size: 0.875rem; color: #666; margin-bottom: 0.5rem; }
+  .paste-area textarea {
+    width: 100%;
+    height: 220px;
+    padding: 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .paste-area textarea:focus { outline: none; border-color: #4a90d9; }
+  .paste-area button {
+    margin-top: 0.75rem;
+    background: #4a90d9;
+    color: #fff;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .paste-area button:hover { background: #3a7bc8; }
 
   /* Settings panel */
   .settings {
@@ -202,12 +253,27 @@
 <body>
 
 <h1>Comment Book Extractor</h1>
-<p class="subtitle">Upload a CSV with <code>display_name</code> and <code>message</code> columns to extract book recommendations.</p>
+<p class="subtitle">Extract book recommendations from comment CSVs or pasted text.</p>
 
-<div class="upload-area" id="dropZone">
-  <label for="csvInput">Choose CSV File</label>
-  <input type="file" id="csvInput" accept=".csv">
-  <p>or drag &amp; drop a .csv file here</p>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="csv">Upload CSV</button>
+  <button class="tab-btn" data-tab="paste">Paste Text</button>
+</div>
+
+<div class="tab-panel active" id="tab-csv">
+  <div class="upload-area" id="dropZone">
+    <label for="csvInput">Choose CSV File</label>
+    <input type="file" id="csvInput" accept=".csv">
+    <p>CSV must have <code>display_name</code> and <code>message</code> columns. Drag &amp; drop also works.</p>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab-paste">
+  <div class="paste-area">
+    <p>Paste any text below — one comment or recommendation per line works best.</p>
+    <textarea id="pasteInput" placeholder="e.g.&#10;The Name of the Wind by Patrick Rothfuss&#10;Project Hail Mary - Andy Weir&#10;I loved Piranesi by Susanna Clarke"></textarea>
+    <button id="pasteBtn">Extract from text</button>
+  </div>
 </div>
 
 <details class="settings" open>
@@ -748,11 +814,23 @@ const confidenceSlider = document.getElementById('confidenceSlider');
 const confidenceVal = document.getElementById('confidenceVal');
 const aggressiveMode = document.getElementById('aggressiveMode');
 const includeMissingAuthor = document.getElementById('includeMissingAuthor');
+const pasteInput = document.getElementById('pasteInput');
+const pasteBtn = document.getElementById('pasteBtn');
 
 let allResults = [];
 let filteredResults = [];
 let sortCol = 'index';
 let sortAsc = true;
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
 
 // Drag & drop
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -764,6 +842,15 @@ dropZone.addEventListener('drop', (e) => {
   if (file && file.name.endsWith('.csv')) processFile(file);
 });
 csvInput.addEventListener('change', () => { if (csvInput.files[0]) processFile(csvInput.files[0]); });
+
+// Paste text extraction
+pasteBtn.addEventListener('click', () => {
+  const text = pasteInput.value.trim();
+  if (!text) return;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const records = lines.map(line => ({ display_name: 'pasted', message: line }));
+  processRecords(records, `${lines.length} line(s) of pasted text`);
+});
 
 // Settings change → re-filter
 confidenceSlider.addEventListener('input', () => {
@@ -838,9 +925,21 @@ async function processFile(file) {
     return;
   }
 
-  statusEl.textContent = `Extracting from ${records.length} comments...`;
+  csvInput.value = '';
+  processRecords(records, `${records.length} comments`);
+}
 
-  // Use setTimeout to let the DOM update before blocking with extraction
+async function processRecords(records, sourceLabel) {
+  allResults = [];
+  filteredResults = [];
+  resultsBody.innerHTML = '';
+  tableWrap.style.display = 'none';
+  statsBar.classList.remove('visible');
+  downloadBtn.disabled = true;
+
+  statusEl.textContent = `Extracting from ${sourceLabel}...`;
+
+  // Let the DOM update before blocking with extraction
   await new Promise(r => setTimeout(r, 10));
 
   const t0 = performance.now();
@@ -855,7 +954,6 @@ async function processFile(file) {
   statsBar.classList.add('visible');
   tableWrap.style.display = '';
   downloadBtn.disabled = false;
-  csvInput.value = '';
 }
 
 function applyFilters() {
