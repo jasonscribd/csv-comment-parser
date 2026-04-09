@@ -5,10 +5,26 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from ollama_checker import enhance_with_ollama
 from parser import extract_recommendations, parse_comments_csv
 
 st.set_page_config(page_title="Comment CSV Parser", page_icon="🗂️", layout="centered")
 st.title("Comment CSV Parser")
+
+# --- Sidebar: Ollama settings ---
+with st.sidebar:
+    st.header("Ollama Settings")
+    st.text_input(
+        "Ollama API Key",
+        type="password",
+        help="Your API key from ollama.com. Required for LLM book enhancement.",
+        key="ollama_api_key",
+        placeholder="sk-ollama-...",
+    )
+    st.caption(
+        "Optional. When provided, enables the **Enhance with Ollama** step that cleans "
+        "titles/authors and ranks books by number of mentions using GLM-5.1 cloud."
+    )
 
 tab_csv, tab_paste = st.tabs(["Upload CSV", "Paste Text"])
 
@@ -35,22 +51,68 @@ def _run_extraction(input_df: pd.DataFrame, key_suffix: str) -> None:
             include_metadata=True,
             drop_invalid_author=True,
         )
-        output_df = output_df.reset_index(drop=True)
+        st.session_state[f"output_{key_suffix}"] = output_df.reset_index(drop=True)
+        # Clear any stale LLM result when re-extracting
+        st.session_state.pop(f"enhanced_{key_suffix}", None)
 
-        st.subheader("Output Preview")
-        if output_df.empty:
-            st.info("No recommendations found for the selected options.")
-        else:
-            st.dataframe(output_df.head(200), use_container_width=True)
-            st.caption(f"Extracted {len(output_df)} recommendation rows.")
+    if f"output_{key_suffix}" not in st.session_state:
+        return
 
-        st.download_button(
-            label="Download extracted CSV",
-            data=output_df.to_csv(index=False).encode("utf-8"),
-            file_name="extracted_recommendations.csv",
-            mime="text/csv",
-            key=f"download_{key_suffix}",
-        )
+    output_df = st.session_state[f"output_{key_suffix}"]
+
+    st.subheader("Extraction Results")
+    if output_df.empty:
+        st.info("No recommendations found for the selected options.")
+    else:
+        st.dataframe(output_df.head(200), use_container_width=True)
+        st.caption(f"Extracted {len(output_df)} recommendation rows.")
+
+    st.download_button(
+        label="Download extracted CSV",
+        data=output_df.to_csv(index=False).encode("utf-8"),
+        file_name="extracted_recommendations.csv",
+        mime="text/csv",
+        key=f"download_{key_suffix}",
+    )
+
+    # --- LLM Enhancement ---
+    api_key = st.session_state.get("ollama_api_key", "")
+    if not api_key:
+        st.info("Add your Ollama API key in the sidebar to enable LLM-powered book ranking and cleanup.")
+        return
+
+    if output_df.empty:
+        return
+
+    st.subheader("LLM Enhancement")
+    st.caption(
+        "Sends extracted books to **GLM-5.1 cloud** via Ollama to merge near-duplicates, "
+        "clean titles/authors, and rank by number of mentions."
+    )
+    if st.button("Enhance with Ollama", key=f"enhance_{key_suffix}"):
+        with st.spinner("Cleaning and ranking books with Ollama GLM-5.1..."):
+            try:
+                enhanced_df = enhance_with_ollama(output_df, api_key)
+                st.session_state[f"enhanced_{key_suffix}"] = enhanced_df
+            except Exception as err:
+                st.error(f"Ollama API error: {err}")
+
+    if f"enhanced_{key_suffix}" not in st.session_state:
+        return
+
+    enhanced_df = st.session_state[f"enhanced_{key_suffix}"]
+
+    st.subheader("Enhanced Results")
+    st.dataframe(enhanced_df, use_container_width=True)
+    st.caption(f"{len(enhanced_df)} unique books, ranked by mentions.")
+
+    st.download_button(
+        label="Download enhanced CSV",
+        data=enhanced_df.to_csv(index=False).encode("utf-8"),
+        file_name="enhanced_recommendations.csv",
+        mime="text/csv",
+        key=f"download_enhanced_{key_suffix}",
+    )
 
 
 with tab_csv:
