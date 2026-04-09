@@ -248,6 +248,36 @@
     white-space: normal;
     word-break: break-word;
   }
+
+  /* Ollama panel */
+  #ollamaKeyInput {
+    padding: 0.4rem 0.7rem;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    width: 280px;
+  }
+  #ollamaKeyInput:focus { outline: none; border-color: #4a90d9; }
+  .ollama-hint { padding: 0 1rem 0.75rem; font-size: 0.8rem; color: #888; }
+  #enhanceBtn {
+    background: #7c4dff;
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1.2rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    align-self: flex-end;
+  }
+  #enhanceBtn:hover:not(:disabled) { background: #6c3de0; }
+  #enhanceBtn:disabled { background: #aaa; cursor: default; }
+
+  /* Enhanced results section */
+  .enhanced-section { margin-top: 2rem; }
+  .enhanced-section h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #333; }
+  #enhancedStatus { font-size: 0.85rem; color: #666; margin-bottom: 0.75rem; }
+  #downloadEnhancedBtn { background: #2d8a4e; }
+  #downloadEnhancedBtn:hover:not(:disabled) { background: #247a42; }
 </style>
 </head>
 <body>
@@ -310,6 +340,18 @@
   </div>
 </details>
 
+<details class="settings" id="ollamaSettings">
+  <summary>Ollama LLM Enhancement</summary>
+  <div class="inner">
+    <label>
+      API Key
+      <input type="password" id="ollamaKeyInput" placeholder="Your ollama.com API key">
+    </label>
+    <button id="enhanceBtn" disabled>Enhance with Ollama GLM-5.1</button>
+  </div>
+  <p class="ollama-hint">Merges near-duplicate books, cleans titles/authors, and ranks by number of mentions using GLM-5.1 cloud.</p>
+</details>
+
 <div class="stats" id="statsBar">
   <div class="stat-card"><strong id="statComments">0</strong>Comments parsed</div>
   <div class="stat-card"><strong id="statBooks">0</strong>Books found</div>
@@ -339,6 +381,27 @@
     </thead>
     <tbody id="resultsBody"></tbody>
   </table>
+</div>
+
+<div class="enhanced-section" id="enhancedSection" style="display:none">
+  <h2>Enhanced Results</h2>
+  <div id="enhancedStatus"></div>
+  <div class="actions">
+    <button id="downloadEnhancedBtn" disabled>Download Enhanced CSV</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Title</th>
+          <th>Author</th>
+          <th>Mentions</th>
+        </tr>
+      </thead>
+      <tbody id="enhancedBody"></tbody>
+    </table>
+  </div>
 </div>
 
 <script>
@@ -980,6 +1043,7 @@ function applyFilters() {
   document.getElementById('statOther').textContent = otherCount;
 
   renderTable();
+  updateEnhanceBtn();
 }
 
 function renderTable() {
@@ -1070,6 +1134,135 @@ function esc(str) {
   d.textContent = str || '';
   return d.innerHTML;
 }
+
+// ==========================================
+//  OLLAMA ENHANCEMENT
+// ==========================================
+
+const ollamaKeyInput = document.getElementById('ollamaKeyInput');
+const enhanceBtn = document.getElementById('enhanceBtn');
+const enhancedSection = document.getElementById('enhancedSection');
+const enhancedBody = document.getElementById('enhancedBody');
+const enhancedStatus = document.getElementById('enhancedStatus');
+const downloadEnhancedBtn = document.getElementById('downloadEnhancedBtn');
+
+let enhancedResults = [];
+
+function updateEnhanceBtn() {
+  enhanceBtn.disabled = !ollamaKeyInput.value.trim() || filteredResults.length === 0;
+}
+
+ollamaKeyInput.addEventListener('input', updateEnhanceBtn);
+
+enhanceBtn.addEventListener('click', async () => {
+  const key = ollamaKeyInput.value.trim();
+  if (!key || filteredResults.length === 0) return;
+
+  enhanceBtn.disabled = true;
+  enhanceBtn.textContent = 'Enhancing\u2026';
+
+  try {
+    enhancedResults = await callOllamaEnhance(filteredResults, key);
+    renderEnhancedTable();
+    enhancedSection.style.display = '';
+    downloadEnhancedBtn.disabled = false;
+  } catch (err) {
+    alert('Ollama API error: ' + err.message);
+  } finally {
+    enhanceBtn.disabled = false;
+    enhanceBtn.textContent = 'Enhance with Ollama GLM-5.1';
+    updateEnhanceBtn();
+  }
+});
+
+function aggregateRaw(results) {
+  const map = new Map();
+  for (const r of results) {
+    const key = (r.Title || '').toLowerCase().trim() + ' || ' + (r.Author || '').toLowerCase().trim();
+    if (map.has(key)) {
+      map.get(key).count++;
+    } else {
+      map.set(key, { title: r.Title || '', author: r.Author || '', count: 1 });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
+async function callOllamaEnhance(results, apiKey) {
+  const bookList = aggregateRaw(results);
+
+  const prompt =
+    'You are a book data cleaning assistant.\n' +
+    'I extracted book recommendations from user comments. ' +
+    'Some entries are duplicates of the same book (different spelling, formatting, or partial title). ' +
+    'Some titles or author names may be noisy or incomplete.\n\n' +
+    'Your tasks:\n' +
+    '1. Merge entries that refer to the same book, summing their counts.\n' +
+    '2. Standardize each book title (proper title-case, remove noise).\n' +
+    '3. Standardize each author name (full name, proper capitalization, e.g. \'Andy Weir\').\n' +
+    '4. Return the result sorted by count descending.\n\n' +
+    'Input books:\n' + JSON.stringify(bookList, null, 2) + '\n\n' +
+    'Return ONLY a valid JSON array. Each element must have exactly these keys: ' +
+    '"title" (string), "author" (string), "mentions" (integer). ' +
+    'No markdown fences, no explanation, no extra text.';
+
+  const response = await fetch('https://api.ollama.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey,
+    },
+    body: JSON.stringify({
+      model: 'glm-5.1:cloud',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error('HTTP ' + response.status + ': ' + text);
+  }
+
+  const data = await response.json();
+  let raw = data.choices[0].message.content.trim();
+
+  // Strip markdown code fences if the model wraps output
+  raw = raw.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+
+  return JSON.parse(raw);
+}
+
+function renderEnhancedTable() {
+  enhancedBody.innerHTML = '';
+  enhancedResults.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(r.title || '') + '</td>' +
+      '<td>' + esc(r.author || '') + '</td>' +
+      '<td>' + (r.mentions || 0) + '</td>';
+    enhancedBody.appendChild(tr);
+  });
+  enhancedStatus.textContent = enhancedResults.length + ' unique books, ranked by mentions.';
+}
+
+downloadEnhancedBtn.addEventListener('click', () => {
+  if (enhancedResults.length === 0) return;
+  const header = ['Title', 'Author', 'Mentions'];
+  const rows = enhancedResults.map(r =>
+    [r.title || '', r.author || '', r.mentions || 0]
+      .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')
+  );
+  const csvContent = header.join(',') + '\n' + rows.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'enhanced_recommendations.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
 </script>
 </body>
 </html>
