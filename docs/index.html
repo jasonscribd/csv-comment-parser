@@ -280,6 +280,32 @@
   #enhancedStatus { font-size: 0.85rem; color: #666; margin-bottom: 0.75rem; }
   #downloadEnhancedBtn { background: #2d8a4e; }
   #downloadEnhancedBtn:hover:not(:disabled) { background: #247a42; }
+
+  /* SQL output */
+  #generateSqlBtn { background: #5c6bc0; }
+  #generateSqlBtn:hover:not(:disabled) { background: #4a56a8; }
+  #copySqlBtn {
+    background: #fff;
+    color: #555;
+    border: 1px solid #ccc;
+    padding: 0.3rem 0.8rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  #copySqlBtn:hover { background: #f5f5f5; }
+  #sqlOutput {
+    width: 100%;
+    height: 280px;
+    padding: 0.75rem;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.78rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    resize: vertical;
+    background: #fafafa;
+    color: #333;
+  }
 </style>
 </head>
 <body>
@@ -410,6 +436,16 @@
       </thead>
       <tbody id="enhancedBody"></tbody>
     </table>
+  </div>
+  <div class="actions" style="margin-top:1rem">
+    <button id="generateSqlBtn">Generate SQL</button>
+  </div>
+  <div id="sqlSection" style="display:none;margin-top:0.75rem">
+    <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
+      <strong style="font-size:0.9rem">SQL Query</strong>
+      <button id="copySqlBtn">Copy</button>
+    </div>
+    <textarea id="sqlOutput" readonly spellcheck="false"></textarea>
   </div>
 </div>
 
@@ -1266,6 +1302,84 @@ function renderEnhancedTable() {
   });
   enhancedStatus.textContent = enhancedResults.length + ' unique books, ranked by mentions.';
 }
+
+// SQL generation
+const generateSqlBtn = document.getElementById('generateSqlBtn');
+const sqlSection = document.getElementById('sqlSection');
+const sqlOutput = document.getElementById('sqlOutput');
+const copySqlBtn = document.getElementById('copySqlBtn');
+
+const SQL_TAIL = `),
+ranked AS (
+  SELECT
+    books.row_num,
+    books.search_title,
+    books.search_author,
+    books.mentions,
+    content_info.content_type,
+    content_info.isbn,
+    content_info.doc_id,
+    ROW_NUMBER() OVER (PARTITION BY books.row_num ORDER BY content_info.num_ratings DESC NULLS LAST) AS rn
+  FROM books
+  LEFT JOIN prod.looker.content_info AS content_info
+    ON LOWER(content_info.doc_title) = LOWER(books.search_title)
+    AND (books.search_author = '' OR LOCATE(books.search_author, content_info.authors) > 0)
+    AND content_info.is_published = true
+    AND content_info.is_deleted = false
+    AND content_info.is_duplicate = false
+    AND content_info.content_type = 'audiobook'
+    AND content_info.content_language = 'English'
+  LEFT JOIN prod.looker.catalog_country_current_cost AS catalog_country_current_cost
+    ON content_info.doc_id = catalog_country_current_cost.doc_id
+    AND catalog_country_current_cost.country_code IN ('All', 'US')
+)
+SELECT
+  row_num,
+  search_title,
+  search_author,
+  mentions,
+  content_type,
+  isbn,
+  doc_id
+FROM ranked
+WHERE rn = 1
+ORDER BY row_num`;
+
+function sqlStr(val) {
+  return "'" + String(val || '').replace(/'/g, "''") + "'";
+}
+
+function generateSQL(books) {
+  const lines = books.map((book, i) => {
+    const n = i + 1;
+    const title = sqlStr(book.title || '');
+    const author = sqlStr(book.author || '');
+    const mentions = book.mentions || 0;
+    return i === 0
+      ? `  SELECT ${n} AS row_num, ${title} AS search_title, ${author} AS search_author, ${mentions} AS mentions`
+      : `  UNION ALL SELECT ${n}, ${title}, ${author}, ${mentions}`;
+  });
+  return 'WITH books AS (\n' + lines.join('\n') + '\n' + SQL_TAIL;
+}
+
+generateSqlBtn.addEventListener('click', () => {
+  if (enhancedResults.length === 0) return;
+  sqlOutput.value = generateSQL(enhancedResults);
+  sqlSection.style.display = '';
+  sqlOutput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+copySqlBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(sqlOutput.value).then(() => {
+    copySqlBtn.textContent = 'Copied!';
+    setTimeout(() => { copySqlBtn.textContent = 'Copy'; }, 2000);
+  }).catch(() => {
+    sqlOutput.select();
+    document.execCommand('copy');
+    copySqlBtn.textContent = 'Copied!';
+    setTimeout(() => { copySqlBtn.textContent = 'Copy'; }, 2000);
+  });
+});
 
 downloadEnhancedBtn.addEventListener('click', () => {
   if (enhancedResults.length === 0) return;

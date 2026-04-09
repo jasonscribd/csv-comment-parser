@@ -7,6 +7,7 @@ import streamlit as st
 
 from ollama_checker import enhance_with_ollama
 from parser import extract_recommendations, parse_comments_csv
+from sql_generator import generate_sql
 
 st.set_page_config(page_title="Comment CSV Parser", page_icon="🗂️", layout="centered")
 st.title("Comment CSV Parser")
@@ -113,6 +114,10 @@ def _run_extraction(input_df: pd.DataFrame, key_suffix: str) -> None:
         mime="text/csv",
         key=f"download_enhanced_{key_suffix}",
     )
+
+    st.subheader("SQL Query")
+    st.caption("Paste directly into your database client.")
+    st.code(generate_sql(enhanced_df), language="sql")
 
 
 with tab_csv:
