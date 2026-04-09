@@ -250,14 +250,16 @@
   }
 
   /* Ollama panel */
-  #ollamaKeyInput {
+  #ollamaUrlInput, #ollamaKeyInput {
     padding: 0.4rem 0.7rem;
     border: 1px solid #ccc;
     border-radius: 5px;
     font-size: 0.9rem;
-    width: 280px;
+    font-family: monospace;
   }
-  #ollamaKeyInput:focus { outline: none; border-color: #4a90d9; }
+  #ollamaUrlInput { width: 240px; }
+  #ollamaKeyInput { width: 240px; }
+  #ollamaUrlInput:focus, #ollamaKeyInput:focus { outline: none; border-color: #4a90d9; }
   .ollama-hint { padding: 0 1rem 0.75rem; font-size: 0.8rem; color: #888; }
   #enhanceBtn {
     background: #7c4dff;
@@ -344,12 +346,19 @@
   <summary>Ollama LLM Enhancement</summary>
   <div class="inner">
     <label>
-      API Key
-      <input type="password" id="ollamaKeyInput" placeholder="Your ollama.com API key">
+      Base URL
+      <input type="text" id="ollamaUrlInput" value="http://localhost:11434/v1" style="width:240px">
+    </label>
+    <label>
+      API Key <span style="font-weight:400;color:#aaa">(optional for local)</span>
+      <input type="password" id="ollamaKeyInput" placeholder="leave blank for local Ollama">
     </label>
     <button id="enhanceBtn" disabled>Enhance with Ollama GLM-5.1</button>
   </div>
-  <p class="ollama-hint">Merges near-duplicate books, cleans titles/authors, and ranks by number of mentions using GLM-5.1 cloud.</p>
+  <p class="ollama-hint">
+    Merges near-duplicate books, cleans titles/authors, and ranks by mentions.
+    Run Ollama locally with CORS enabled: <code>OLLAMA_ORIGINS=* ollama serve</code>
+  </p>
 </details>
 
 <div class="stats" id="statsBar">
@@ -1139,6 +1148,7 @@ function esc(str) {
 //  OLLAMA ENHANCEMENT
 // ==========================================
 
+const ollamaUrlInput = document.getElementById('ollamaUrlInput');
 const ollamaKeyInput = document.getElementById('ollamaKeyInput');
 const enhanceBtn = document.getElementById('enhanceBtn');
 const enhancedSection = document.getElementById('enhancedSection');
@@ -1149,10 +1159,11 @@ const downloadEnhancedBtn = document.getElementById('downloadEnhancedBtn');
 let enhancedResults = [];
 
 function updateEnhanceBtn() {
-  enhanceBtn.disabled = !ollamaKeyInput.value.trim() || filteredResults.length === 0;
+  enhanceBtn.disabled = filteredResults.length === 0;
 }
 
 ollamaKeyInput.addEventListener('input', updateEnhanceBtn);
+ollamaUrlInput.addEventListener('input', updateEnhanceBtn);
 
 enhanceBtn.addEventListener('click', async () => {
   const key = ollamaKeyInput.value.trim();
@@ -1162,12 +1173,21 @@ enhanceBtn.addEventListener('click', async () => {
   enhanceBtn.textContent = 'Enhancing\u2026';
 
   try {
-    enhancedResults = await callOllamaEnhance(filteredResults, key);
+    const baseUrl = ollamaUrlInput.value.trim().replace(/\/$/, '');
+    enhancedResults = await callOllamaEnhance(filteredResults, baseUrl, key);
     renderEnhancedTable();
     enhancedSection.style.display = '';
     downloadEnhancedBtn.disabled = false;
   } catch (err) {
-    alert('Ollama API error: ' + err.message);
+    let msg = err.message || String(err);
+    if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('networkerror')) {
+      msg = 'Could not reach Ollama.\n\n' +
+        'For local Ollama: make sure it is running with CORS enabled:\n' +
+        '  OLLAMA_ORIGINS=* ollama serve\n\n' +
+        'For Ollama cloud: the cloud API does not support browser requests due to CORS. ' +
+        'Use the Streamlit app instead.';
+    }
+    alert('Ollama error:\n\n' + msg);
   } finally {
     enhanceBtn.disabled = false;
     enhanceBtn.textContent = 'Enhance with Ollama GLM-5.1';
@@ -1188,7 +1208,7 @@ function aggregateRaw(results) {
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-async function callOllamaEnhance(results, apiKey) {
+async function callOllamaEnhance(results, baseUrl, apiKey) {
   const bookList = aggregateRaw(results);
 
   const prompt =
@@ -1206,12 +1226,12 @@ async function callOllamaEnhance(results, apiKey) {
     '"title" (string), "author" (string), "mentions" (integer). ' +
     'No markdown fences, no explanation, no extra text.';
 
-  const response = await fetch('https://api.ollama.com/v1/chat/completions', {
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = 'Bearer ' + apiKey;
+
+  const response = await fetch(baseUrl + '/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + apiKey,
-    },
+    headers,
     body: JSON.stringify({
       model: 'glm-5.1:cloud',
       messages: [{ role: 'user', content: prompt }],
