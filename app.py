@@ -76,6 +76,11 @@ def _run_extraction(input_df: pd.DataFrame, key_suffix: str) -> None:
         key=f"download_{key_suffix}",
     )
 
+    if not output_df.empty:
+        st.subheader("SQL Query")
+        st.caption("Paste directly into your database client.")
+        st.code(generate_sql(output_df), language="sql")
+
     # --- LLM Enhancement ---
     api_key = st.session_state.get("ollama_api_key", "")
     if not api_key:

@@ -284,6 +284,7 @@
   /* SQL output */
   #generateSqlBtn { background: #5c6bc0; }
   #generateSqlBtn:hover:not(:disabled) { background: #4a56a8; }
+  #generateSqlBtn:disabled { background: #aaa; cursor: default; }
   #copySqlBtn {
     background: #fff;
     color: #555;
@@ -399,6 +400,7 @@
 
 <div class="actions">
   <button id="downloadBtn" disabled>Download CSV</button>
+  <button id="generateSqlBtn" disabled>Generate SQL</button>
 </div>
 
 <div class="table-wrap" id="tableWrap" style="display:none">
@@ -416,6 +418,14 @@
     </thead>
     <tbody id="resultsBody"></tbody>
   </table>
+</div>
+
+<div id="sqlSection" style="display:none;margin-top:0.75rem">
+  <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
+    <strong style="font-size:0.9rem">SQL Query</strong>
+    <button id="copySqlBtn">Copy</button>
+  </div>
+  <textarea id="sqlOutput" readonly spellcheck="false"></textarea>
 </div>
 
 <div class="enhanced-section" id="enhancedSection" style="display:none">
@@ -436,16 +446,6 @@
       </thead>
       <tbody id="enhancedBody"></tbody>
     </table>
-  </div>
-  <div class="actions" style="margin-top:1rem">
-    <button id="generateSqlBtn">Generate SQL</button>
-  </div>
-  <div id="sqlSection" style="display:none;margin-top:0.75rem">
-    <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
-      <strong style="font-size:0.9rem">SQL Query</strong>
-      <button id="copySqlBtn">Copy</button>
-    </div>
-    <textarea id="sqlOutput" readonly spellcheck="false"></textarea>
   </div>
 </div>
 
@@ -1196,6 +1196,7 @@ let enhancedResults = [];
 
 function updateEnhanceBtn() {
   enhanceBtn.disabled = filteredResults.length === 0;
+  generateSqlBtn.disabled = filteredResults.length === 0;
 }
 
 ollamaKeyInput.addEventListener('input', updateEnhanceBtn);
@@ -1363,8 +1364,11 @@ function generateSQL(books) {
 }
 
 generateSqlBtn.addEventListener('click', () => {
-  if (enhancedResults.length === 0) return;
-  sqlOutput.value = generateSQL(enhancedResults);
+  const books = enhancedResults.length > 0
+    ? enhancedResults
+    : filteredResults.map(r => ({ title: r.Title, author: r.Author, mentions: 1 }));
+  if (books.length === 0) return;
+  sqlOutput.value = generateSQL(books);
   sqlSection.style.display = '';
   sqlOutput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
