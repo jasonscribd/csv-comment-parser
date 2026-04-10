@@ -1320,19 +1320,35 @@ ranked AS (
     content_info.content_type,
     content_info.isbn,
     content_info.doc_id,
+    CASE WHEN content_info.doc_id IS NOT NULL THEN
+      CONCAT(
+        'https://www.everand.com/audiobook/',
+        content_info.doc_id,
+        '/',
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(content_info.doc_title, '[^a-zA-Z0-9 ]', '-'),
+          '[ -]+', '-'
+        )
+      )
+    END AS everand_link,
     ROW_NUMBER() OVER (PARTITION BY books.row_num ORDER BY content_info.num_ratings DESC NULLS LAST) AS rn
   FROM books
   LEFT JOIN prod.looker.content_info AS content_info
-    ON LOWER(content_info.doc_title) = LOWER(books.search_title)
-    AND (books.search_author = '' OR LOCATE(books.search_author, content_info.authors) > 0)
+    ON (
+      LOWER(content_info.doc_title) = LOWER(books.search_title)
+      OR LOWER(content_info.doc_title) LIKE CONCAT(LOWER(books.search_title), ': %')
+      OR LOWER(content_info.doc_title) LIKE CONCAT(LOWER(books.search_title), ' - %')
+      OR REGEXP_REPLACE(LOWER(content_info.doc_title), '[^a-z0-9 ]', '') =
+         REGEXP_REPLACE(LOWER(books.search_title), '[^a-z0-9 ]', '')
+      OR REGEXP_REPLACE(LOWER(content_info.doc_title), '[^a-z0-9 ]', '') LIKE
+         CONCAT(REGEXP_REPLACE(LOWER(books.search_title), '[^a-z0-9 ]', ''), ': %')
+    )
+    AND (books.search_author = '' OR LOCATE(LOWER(books.search_author), LOWER(content_info.authors)) > 0)
     AND content_info.is_published = true
     AND content_info.is_deleted = false
     AND content_info.is_duplicate = false
     AND content_info.content_type = 'audiobook'
     AND content_info.content_language = 'English'
-  LEFT JOIN prod.looker.catalog_country_current_cost AS catalog_country_current_cost
-    ON content_info.doc_id = catalog_country_current_cost.doc_id
-    AND catalog_country_current_cost.country_code IN ('All', 'US')
 )
 SELECT
   row_num,
@@ -1341,7 +1357,8 @@ SELECT
   mentions,
   content_type,
   isbn,
-  doc_id
+  doc_id,
+  everand_link
 FROM ranked
 WHERE rn = 1
 ORDER BY row_num`;
