@@ -323,7 +323,7 @@
   <div class="upload-area" id="dropZone">
     <label for="csvInput">Choose CSV File</label>
     <input type="file" id="csvInput" accept=".csv">
-    <p>CSV must have <code>display_name</code> and <code>message</code> columns. Drag &amp; drop also works.</p>
+    <p>Upload a comment CSV (<code>display_name</code> + <code>message</code> columns) or a pre-structured book list (<code>Title</code> + <code>Author</code> columns). Drag &amp; drop also works.</p>
   </div>
 </div>
 
@@ -929,6 +929,8 @@ let allResults = [];
 let filteredResults = [];
 let sortCol = 'index';
 let sortAsc = true;
+let csvMode = 'comments'; // 'comments' | 'structured'
+let structuredBooks = [];
 
 // Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -988,18 +990,14 @@ function parseCSV(file) {
       header: true,
       skipEmptyLines: true,
       complete: (res) => {
+        // Return all columns with trimmed keys and values; caller decides what to use
         const rows = res.data.map(row => {
-          const norm = {};
+          const out = {};
           for (const key of Object.keys(row)) {
-            norm[key.trim().toLowerCase()] = (row[key] || '').trim();
+            out[key.trim()] = (row[key] || '').trim();
           }
-          const out = {
-            display_name: norm['display_name'] || '',
-            message: norm['message'] || '',
-          };
-          if ('uuid' in norm) out.uuid = norm['uuid'];
           return out;
-        }).filter(r => r.display_name || r.message);
+        });
         resolve(rows);
       },
       error: reject,
@@ -1010,31 +1008,97 @@ function parseCSV(file) {
 async function processFile(file) {
   allResults = [];
   filteredResults = [];
+  structuredBooks = [];
   resultsBody.innerHTML = '';
   tableWrap.style.display = 'none';
   statsBar.classList.remove('visible');
   downloadBtn.disabled = true;
   statusEl.textContent = 'Parsing CSV...';
 
-  let records;
+  let rawRows;
   try {
-    records = await parseCSV(file);
+    rawRows = await parseCSV(file);
   } catch (err) {
     statusEl.textContent = 'Failed to parse CSV: ' + err.message;
     return;
   }
 
-  const headers = records.length > 0 ? Object.keys(records[0]) : [];
-  const hasDisplay = headers.includes('display_name');
-  const hasMessage = headers.includes('message');
-  if (!hasDisplay || !hasMessage) {
-    statusEl.textContent = 'CSV is missing required columns: ' +
-      [!hasDisplay && 'display_name', !hasMessage && 'message'].filter(Boolean).join(', ');
+  if (rawRows.length === 0) {
+    statusEl.textContent = 'No rows found in CSV.';
     return;
   }
 
+  const headerKeys = Object.keys(rawRows[0]).map(k => k.toLowerCase());
+  const hasTitle = headerKeys.includes('title');
+  const hasAuthor = headerKeys.includes('author');
+  const hasDisplay = headerKeys.includes('display_name');
+  const hasMessage = headerKeys.includes('message');
+
   csvInput.value = '';
-  processRecords(records, `${records.length} comments`);
+
+  if (hasTitle && hasAuthor) {
+    // Pre-structured book list — display directly, no extraction needed
+    csvMode = 'structured';
+    processStructuredBooks(rawRows);
+  } else if (hasDisplay && hasMessage) {
+    // Comment CSV — run the extraction engine
+    csvMode = 'comments';
+    const records = rawRows.map(row => {
+      const norm = {};
+      for (const key of Object.keys(row)) norm[key.toLowerCase()] = row[key];
+      const out = { display_name: norm['display_name'] || '', message: norm['message'] || '' };
+      if ('uuid' in norm) out.uuid = norm['uuid'];
+      return out;
+    }).filter(r => r.display_name || r.message);
+    processRecords(records, `${records.length} comments`);
+  } else {
+    statusEl.textContent =
+      'Unrecognized CSV format. Need display_name + message columns, or Title + Author columns.';
+  }
+}
+
+function parseFrequency(val) {
+  if (!val) return 1;
+  const n = parseInt(String(val).replace(/,/g, ''), 10);
+  return isNaN(n) ? 1 : n;
+}
+
+function processStructuredBooks(rawRows) {
+  structuredBooks = rawRows.map(row => {
+    const norm = {};
+    for (const key of Object.keys(row)) norm[key.toLowerCase()] = row[key];
+    return {
+      title: norm['title'] || '',
+      author: norm['author'] || '',
+      mentions: parseFrequency(norm['frequency'] || norm['mentions'] || '1'),
+    };
+  }).filter(b => b.title);
+
+  // Swap table header for structured mode
+  document.getElementById('tableHead').innerHTML =
+    '<tr>' +
+    '<th data-col="index"># <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="title">Title <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="author">Author <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="mentions">Frequency <span class="sort-arrow">&#9650;</span></th>' +
+    '</tr>';
+
+  resultsBody.innerHTML = '';
+  structuredBooks.forEach((b, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(b.title) + '</td>' +
+      '<td>' + esc(b.author || '\u2014') + '</td>' +
+      '<td>' + b.mentions.toLocaleString() + '</td>';
+    resultsBody.appendChild(tr);
+  });
+
+  statusEl.textContent = `Loaded ${structuredBooks.length} books.`;
+  tableWrap.style.display = '';
+  downloadBtn.disabled = false;
+  generateSqlBtn.disabled = false;
+  enhanceBtn.disabled = true; // Ollama not applicable for pre-structured data
 }
 
 async function processRecords(records, sourceLabel) {
@@ -1044,6 +1108,18 @@ async function processRecords(records, sourceLabel) {
   tableWrap.style.display = 'none';
   statsBar.classList.remove('visible');
   downloadBtn.disabled = true;
+
+  // Restore comment-mode table headers (may have been swapped by structured mode)
+  document.getElementById('tableHead').innerHTML =
+    '<tr>' +
+    '<th data-col="index"># <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="Title">Title <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="Author">Author <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="display_name">Commenter <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="pattern">Pattern <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="confidence">Conf <span class="sort-arrow">&#9650;</span></th>' +
+    '<th data-col="message">Comment <span class="sort-arrow">&#9650;</span></th>' +
+    '</tr>';
 
   statusEl.textContent = `Extracting from ${sourceLabel}...`;
 
@@ -1065,6 +1141,7 @@ async function processRecords(records, sourceLabel) {
 }
 
 function applyFilters() {
+  if (csvMode === 'structured') return;
   const minConf = parseInt(confidenceSlider.value);
   const aggressive = aggressiveMode.checked;
   const showMissingAuthor = includeMissingAuthor.checked;
@@ -1139,17 +1216,31 @@ function renderTable() {
   });
 }
 
-// Download — uses column picker checkboxes
+// Download — uses column picker checkboxes for comment mode; simple CSV for structured mode
 downloadBtn.addEventListener('click', () => {
-  if (filteredResults.length === 0) return;
+  if (csvMode === 'structured') {
+    if (structuredBooks.length === 0) return;
+    const header = ['Title', 'Author', 'Mentions'];
+    const rows = structuredBooks.map(b =>
+      [b.title, b.author, b.mentions].map(v => '"' + String(v || '').replace(/"/g, '""') + '"').join(',')
+    );
+    const csvContent = header.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'books.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
 
+  if (filteredResults.length === 0) return;
   const header = getSelectedColumns();
   if (header.length === 0) return;
-
   const csvRows = filteredResults.map(r =>
     header.map(col => '"' + String(r[col] || '').replace(/"/g, '""') + '"').join(',')
   );
-
   const csvContent = header.join(',') + '\n' + csvRows.join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
@@ -1195,6 +1286,11 @@ const downloadEnhancedBtn = document.getElementById('downloadEnhancedBtn');
 let enhancedResults = [];
 
 function updateEnhanceBtn() {
+  if (csvMode === 'structured') {
+    enhanceBtn.disabled = true;
+    generateSqlBtn.disabled = structuredBooks.length === 0;
+    return;
+  }
   enhanceBtn.disabled = filteredResults.length === 0;
   generateSqlBtn.disabled = filteredResults.length === 0;
 }
@@ -1381,9 +1477,14 @@ function generateSQL(books) {
 }
 
 generateSqlBtn.addEventListener('click', () => {
-  const books = enhancedResults.length > 0
-    ? enhancedResults
-    : filteredResults.map(r => ({ title: r.Title, author: r.Author, mentions: 1 }));
+  let books;
+  if (csvMode === 'structured') {
+    books = structuredBooks; // already has {title, author, mentions}
+  } else if (enhancedResults.length > 0) {
+    books = enhancedResults;
+  } else {
+    books = filteredResults.map(r => ({ title: r.Title, author: r.Author, mentions: 1 }));
+  }
   if (books.length === 0) return;
   sqlOutput.value = generateSQL(books);
   sqlSection.style.display = '';
