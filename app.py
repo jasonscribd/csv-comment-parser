@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from ollama_checker import enhance_with_ollama
-from parser import extract_recommendations, parse_comments_csv
+from parser import extract_recommendations, parse_comments_csv, parse_structured_csv
 from sql_generator import generate_sql
 
 st.set_page_config(page_title="Comment CSV Parser", page_icon="🗂️", layout="centered")
@@ -28,6 +28,25 @@ with st.sidebar:
     )
 
 tab_csv, tab_paste = st.tabs(["Upload CSV", "Paste Text"])
+
+
+def _run_structured_display(book_df: pd.DataFrame, key_suffix: str) -> None:
+    """Show structured book data with download and SQL query (no extraction needed)."""
+    st.subheader("Books")
+    st.dataframe(book_df, use_container_width=True)
+    st.caption(f"{len(book_df)} books loaded.")
+
+    st.download_button(
+        label="Download CSV",
+        data=book_df.to_csv(index=False).encode("utf-8"),
+        file_name="books.csv",
+        mime="text/csv",
+        key=f"download_{key_suffix}",
+    )
+
+    st.subheader("SQL Query")
+    st.caption("Paste directly into your database client.")
+    st.code(generate_sql(book_df), language="sql")
 
 
 def _run_extraction(input_df: pd.DataFrame, key_suffix: str) -> None:
@@ -126,26 +145,50 @@ def _run_extraction(input_df: pd.DataFrame, key_suffix: str) -> None:
 
 
 with tab_csv:
-    st.write("Upload a CSV with columns `display_name` and `message`.")
+    st.write(
+        "Upload a comment CSV (`display_name` + `message` columns) "
+        "or a pre-structured book list (`Title` + `Author` columns)."
+    )
     uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
 
     if uploaded_file is not None:
-        try:
-            comments = parse_comments_csv(uploaded_file)
+        # Peek at column headers to decide which flow to use
+        headers = set(pd.read_csv(uploaded_file, nrows=0).columns.str.strip())
+        uploaded_file.seek(0)
 
-            if not comments:
-                st.warning("No comment rows were found in the CSV.")
-            else:
-                input_df = pd.DataFrame(comments)
-                st.success(f"Loaded {len(input_df)} comments successfully.")
-                st.subheader("Input Preview")
-                st.dataframe(input_df.head(50), use_container_width=True)
-                _run_extraction(input_df, key_suffix="csv")
+        if {"display_name", "message"}.issubset(headers):
+            # --- Comment CSV: extract recommendations from free-text ---
+            try:
+                comments = parse_comments_csv(uploaded_file)
+                if not comments:
+                    st.warning("No comment rows were found in the CSV.")
+                else:
+                    input_df = pd.DataFrame(comments)
+                    st.success(f"Loaded {len(input_df)} comments successfully.")
+                    st.subheader("Input Preview")
+                    st.dataframe(input_df.head(50), use_container_width=True)
+                    _run_extraction(input_df, key_suffix="csv")
+            except ValueError as err:
+                st.error(str(err))
+            except Exception:
+                st.error("Failed to parse the file. Please upload a valid CSV.")
 
-        except ValueError as err:
-            st.error(str(err))
-        except Exception:
-            st.error("Failed to parse the file. Please upload a valid CSV.")
+        elif {"Title", "Author"}.issubset(headers):
+            # --- Structured book list: display directly, generate SQL ---
+            try:
+                book_df = parse_structured_csv(uploaded_file)
+                st.success(f"Loaded {len(book_df)} books successfully.")
+                _run_structured_display(book_df, key_suffix="csv_structured")
+            except ValueError as err:
+                st.error(str(err))
+            except Exception:
+                st.error("Failed to parse the file. Please upload a valid CSV.")
+
+        else:
+            st.error(
+                "Unrecognized CSV format. Expected either `display_name` + `message` columns "
+                "(comment export) or `Title` + `Author` columns (structured book list)."
+            )
 
 
 with tab_paste:

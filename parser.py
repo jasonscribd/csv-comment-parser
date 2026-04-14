@@ -12,6 +12,7 @@ from typing import BinaryIO
 import pandas as pd
 
 REQUIRED_COLUMNS = {"display_name", "message"}
+STRUCTURED_COLUMNS = {"Title", "Author"}
 QUOTE_CHARS = '"\'“”‘’'
 
 PRONOUN_LEADS = {
@@ -477,3 +478,36 @@ def extract_recommendations(
         cols = base_cols
 
     return pd.DataFrame(rows, columns=cols)
+
+
+def _parse_frequency(val: object) -> int:
+    """Convert a possibly comma-formatted number string to int (e.g. '1,763' → 1763)."""
+    if pd.isna(val):  # type: ignore[arg-type]
+        return 1
+    try:
+        return int(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return 1
+
+
+def parse_structured_csv(file_obj: BinaryIO) -> pd.DataFrame:
+    """Parse a pre-structured book CSV (Title, Author, optional Frequency/ISBN/URL).
+
+    Renames a Frequency column to Mentions and parses comma-formatted numbers.
+    Returns a DataFrame ready to pass directly to generate_sql().
+    """
+    content = file_obj.read().decode("utf-8-sig")
+    df = pd.read_csv(StringIO(content))
+    df.columns = [c.strip() for c in df.columns]
+
+    missing = STRUCTURED_COLUMNS - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {', '.join(sorted(missing))}")
+
+    if "Frequency" in df.columns and "Mentions" not in df.columns:
+        df["Mentions"] = df["Frequency"].apply(_parse_frequency)
+        df = df.drop(columns=["Frequency"])
+    elif "Mentions" not in df.columns:
+        df["Mentions"] = 1
+
+    return df
